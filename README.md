@@ -1,25 +1,22 @@
 # Stable_NYU_HPC
 
-Stable helpers for NYU Torch HPC + Cursor Remote-SSH, based on **[Ignition](https://github.com/wenboluu/Ignition)** by [wenboluu](https://github.com/wenboluu).
+Stable helpers for NYU Torch HPC, based on **[Ignition](https://github.com/wenboluu/Ignition)** by [wenboluu](https://github.com/wenboluu).
 
 > Upstream: https://github.com/wenboluu/Ignition.git  
 > This fork: https://github.com/Nemo0412/Stable_NYU_HPC.git
 
-**One command · One Microsoft login · Reuse SSH for hours** — then use the same ControlMaster from terminal, VS Code, or Cursor.
+**Core:** one Microsoft login via `ignite`, then reuse SSH for hours from any terminal tool.  
+**Optional:** pre-install or relocate Remote-SSH servers (Cursor and/or VS Code) under scratch.
 
 ## What changed vs upstream Ignition
 
 Compared to [wenboluu/Ignition](https://github.com/wenboluu/Ignition):
 
 1. **Manual Microsoft device-code auth (no auto Paste + Enter)**  
-   Auto keystrokes often race the Microsoft page and trigger `AADSTS165000` (token/cookie mismatch). Flow is now:
-   - open the login URL and copy the PIN
-   - you paste and finish sign-in in the browser yourself
-   - press **Enter** in the terminal when done  
-   Upstream’s `ssh -O check` ControlMaster probe is kept.
+   Auto keystrokes often race the Microsoft page and trigger `AADSTS165000`. Flow: copy PIN → you finish browser login → press Enter in the terminal. Upstream’s `ssh -O check` probe is kept.
 
-2. **`preinstall-cursor-torch.sh`**  
-   Downloads the Cursor remote server locally, SCPs it to Torch **scratch**, and extracts it so Remote-SSH does not time out on slow home/VAST I/O or hit home inode quotas.
+2. **Optional multi-editor Remote-SSH helpers** (`preinstall-remote-server.sh`)  
+   Cursor-only users are not required; terminal-only users can ignore these scripts entirely. Supports Cursor, VS Code, or both; local/remote download or symlink-to-scratch.
 
 Upstream additions we keep: `ignite-sh` (password + Duo), `NYUSHHPC.md`, and ControlMaster probe tests.
 
@@ -89,11 +86,36 @@ Verbosity: `ignite quiet` · `ignite` (default) · `ignite vv`
 
 Password + Duo hosts: see [`NYUSHHPC.md`](./NYUSHHPC.md) and `ignite-sh`.
 
-## 3. Cursor Remote-SSH on Torch (optional)
+## 3. Optional: IDE Remote-SSH servers on scratch
 
-Home on Torch has a tight **inode** quota; Cursor Server unpacks many small files. Prefer install under scratch.
+**Skip this section** if you only use `ssh` / `scp` / `rsync` / Jupyter over SSH — `ignite` alone is enough.
 
-Suggested Cursor User settings (adjust paths to your NetID):
+Torch **home** has a tight inode quota; IDE servers unpack many small files. Put them on **scratch** instead.
+
+After `ignite` succeeds:
+
+```bash
+# Default: prepare BOTH Cursor + VS Code (download on laptop → scp → extract)
+./preinstall-remote-server.sh torch
+
+# Or pick one editor
+./preinstall-remote-server.sh --editor cursor torch
+./preinstall-remote-server.sh --editor vscode torch
+# wrappers:
+./preinstall-cursor-torch.sh torch
+./preinstall-vscode-torch.sh torch
+
+# Methods
+./preinstall-remote-server.sh --method local torch     # laptop download (default, most reliable)
+./preinstall-remote-server.sh --method remote torch    # curl on login node (needs outbound HTTPS)
+./preinstall-remote-server.sh --method symlink torch   # no pre-download; symlink ~/.cursor-server
+                                                       # and/or ~/.vscode-server → scratch so the
+                                                       # IDE’s own installer lands off home
+```
+
+Pin commits if auto-detect fails: `CURSOR_COMMIT=...` / `VSCODE_COMMIT=...`.
+
+Suggested settings (replace NetID / only keep the editor you use):
 
 ```json
 {
@@ -105,20 +127,14 @@ Suggested Cursor User settings (adjust paths to your NetID):
 }
 ```
 
-After `ignite` succeeds:
-
-```bash
-./preinstall-cursor-torch.sh torch
-```
-
-Then connect Cursor → Remote-SSH → **torch**.
+For VS Code use `/scratch/YOUR_NETID/vscode-server` as the install path value.
 
 ## 4. Using the connection
 
 Once `ignite` reports ready, anything using Host `torch` reuses the mux until it expires:
 
-- Cursor / VS Code Remote-SSH
-- `ssh torch`, `scp`, `rsync`, etc.
+- Plain SSH, `scp`, `rsync`, Git over SSH
+- Cursor / VS Code Remote-SSH (if you set those up)
 
 ## FAQ
 
