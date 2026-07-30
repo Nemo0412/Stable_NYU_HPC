@@ -1,12 +1,27 @@
-# Ignition (🔥+🪵=🗽)
+# Stable_NYU_HPC
 
-**One command · One Microsoft login · Zero repeated auth**  
-Hours of uninterrupted access to **NYU Torch** from your terminal and IDE.
+Stable helpers for NYU Torch HPC + Cursor Remote-SSH, based on **[Ignition](https://github.com/wenboluu/Ignition)** by [wenboluu](https://github.com/wenboluu).
 
-**Two goals:**
+> Upstream: https://github.com/wenboluu/Ignition.git  
+> This fork: https://github.com/Nemo0412/Stable_NYU_HPC.git
 
-1. **Get through Microsoft auth once.** The HPC login node requires the Microsoft device-code flow (open a URL, enter a PIN). This script automates that, making the first connection effortless.
-2. **Keep one SSH connection alive and reuse it.** We set up a *persisting* underlying SSH connection (via `ControlMaster` / `ControlPersist` in your SSH config). For a long time afterward, every new session—another terminal, VS Code Remote, etc.—reuses that same connection. No separate auth run, no extra PIN. That’s why the config below is involved.
+**One command · One Microsoft login · Reuse SSH for hours** — then use the same ControlMaster from terminal, VS Code, or Cursor.
+
+## What changed vs upstream Ignition
+
+Compared to [wenboluu/Ignition](https://github.com/wenboluu/Ignition):
+
+1. **Manual Microsoft device-code auth (no auto Paste + Enter)**  
+   Auto keystrokes often race the Microsoft page and trigger `AADSTS165000` (token/cookie mismatch). Flow is now:
+   - open the login URL and copy the PIN
+   - you paste and finish sign-in in the browser yourself
+   - press **Enter** in the terminal when done  
+   Upstream’s `ssh -O check` ControlMaster probe is kept.
+
+2. **`preinstall-cursor-torch.sh`**  
+   Downloads the Cursor remote server locally, SCPs it to Torch **scratch**, and extracts it so Remote-SSH does not time out on slow home/VAST I/O or hit home inode quotas.
+
+Upstream additions we keep: `ignite-sh` (password + Duo), `NYUSHHPC.md`, and ControlMaster probe tests.
 
 ## Platforms
 
@@ -14,28 +29,21 @@ Hours of uninterrupted access to **NYU Torch** from your terminal and IDE.
 - [ ] Linux
 - [ ] Windows
 
-Fully supported on macOS, but Linux and Windows are untested. Any help with testing on Linux and Windows would be appreciated.
+Fully supported on macOS; Linux/Windows helpers exist but are lightly tested.
 
 ## Prerequisites
 
-- **Expect** — `brew install expect` (macOS) or your distro’s `expect` package (Linux). On Windows you’d need Expect for Windows or WSL.
-- **SSH** — Standard OpenSSH client.
-- **Platform (for paste + Enter):**
-  - **macOS:** built-in (no extra install).
-  - **Linux:** `xdotool` (X11) or `ydotool` (Wayland) for sending keys to the browser.
-  - **Windows:** PowerShell (built-in).
+- **Expect** — `brew install expect` (macOS) or your distro’s `expect` package
+- **SSH** — OpenSSH client
+- Clipboard only (no auto keystroke tools required for the default `ignite` flow)
 
 ## 1. SSH config
-
-The config below does two things: it defines the *torch* hpc host, and it turns on **connection sharing**. That way, after you run `ignite` once, every other SSH connection to the same host (terminal, VS Code, Cursor, etc.) reuses the same authenticated session—no extra auth. The extra options are what make that persistence work.
-
-Create the control socket directory, then add the block:
 
 ```bash
 mkdir -p ~/.ssh/cm
 ```
 
-Then add (adjust `User` to your NYU NetID):
+Add (replace `YOUR_NETID`):
 
 ```
 Host torch
@@ -46,7 +54,6 @@ Host torch
   ForwardAgent yes
   UserKnownHostsFile /dev/null
   LogLevel ERROR
-  # Reuse one authenticated connection for all sessions
   ControlMaster auto
   ControlPersist 8h
   ControlPath ~/.ssh/cm/%C
@@ -54,104 +61,75 @@ Host torch
   ServerAliveCountMax 3
 ```
 
-- Replace `YOUR_NETID` with your Torch username (e.g. `yl22`).
-
-**What those options do (briefly):**
-
 | Option | Purpose |
 |--------|--------|
-| `ControlMaster auto` | Reuse an existing SSH connection when you run `ssh torch` again instead of opening a new one. |
-| `ControlPersist 8h` | Keep the shared connection alive for 8 hours after the last session, so later logins skip device auth. |
-| `ControlPath ~/.ssh/cm/%C` | Path for the connection socket; `%C` is a hash so each host gets its own socket under `~/.ssh/cm/`. |
-| `ServerAliveInterval 60` | Send a keep-alive every 60 seconds so the connection isn’t dropped by firewalls when idle. |
-| `ServerAliveCountMax 3` | After 3 unanswered keep-alives, treat the connection as dead and disconnect. |
+| `ControlMaster auto` | Reuse an existing SSH connection |
+| `ControlPersist 8h` | Keep the shared connection alive after the last session |
+| `ControlPath ~/.ssh/cm/%C` | Per-host control socket under `~/.ssh/cm/` |
+| `ServerAliveInterval` / `CountMax` | Keep-alives so idle firewalls don’t drop the mux |
 
-## 2. Run
+## 2. Install & run `ignite`
 
-### 2.1 Make the script executable:
-Once, from this repo’s directory
 ```bash
-cd path/to/ignite
+cd path/to/Stable_NYU_HPC
 chmod +x ignite
-```
-
-### 2.1.5 Optional — run `ignite` from anywhere:
-
-**Option A — Add this directory to PATH** (if the repo is e.g. `~/bin`):
-
-```bash
-# In ~/.zshrc or ~/.bashrc
-export PATH="$PATH:$HOME/bin/Ignition"
-```
-
-Then reload your shell (`source ~/.zshrc` or open a new terminal). You can run `ignite` from any directory.
-
-**Option B — Symlink into a directory already on PATH** (e.g. `/usr/local/bin`):
-
-```bash
-ln -sf "$(pwd)/ignite" /usr/local/bin/ignite
-```
-
-(Use the full path to this repo if you’re not in it.) Then `ignite` is available everywhere.
-
-### 2.2 Run `ignite`:
-
-```bash
+ln -sf "$(pwd)/ignite" /usr/local/bin/ignite   # optional
 ignite
 ```
 
-(From this directory, or from any directory if you added it to PATH.)
-
 **What happens:**
 
-1. SSH starts to **torch**.
-2. On “Authenticate with PIN …”, the script opens the login URL and copies the PIN to the clipboard.
-3. ~1s later it sends **Paste** + **5× Enter** to the focused window — focus the browser first.
-4. After `browser_auth_wait` seconds (default 3), it sends **Enter** to SSH and hands control to you.
+1. `ssh -MNf torch` starts and prints a device-code PIN.
+2. Browser opens; PIN is copied to the clipboard.
+3. You paste the PIN at https://login.microsoft.com/device and finish Microsoft login.
+4. Return to the terminal and press **Enter**.
+5. Script probes `ssh -O check`; on success you see `SSH session ready`.
 
-### 2.3 Verbosity:
-- `quiet` or `q` (only errors and outcome)
-- `verbose` or `v` (default)
-- `vv` (very verbose)
+Verbosity: `ignite quiet` · `ignite` (default) · `ignite vv`
 
-**Examples:**
-```bash
-ignite quiet
-ignite vv
+Password + Duo hosts: see [`NYUSHHPC.md`](./NYUSHHPC.md) and `ignite-sh`.
+
+## 3. Cursor Remote-SSH on Torch (optional)
+
+Home on Torch has a tight **inode** quota; Cursor Server unpacks many small files. Prefer install under scratch.
+
+Suggested Cursor User settings (adjust paths to your NetID):
+
+```json
+{
+  "remote.SSH.serverInstallPath": {
+    "torch": "/scratch/YOUR_NETID/cursor-server"
+  },
+  "remote.SSH.localServerDownload": "always",
+  "remote.SSH.connectTimeout": 600
+}
 ```
 
-(Options use words like `quiet` instead of `-q` because Expect treats leading dashes as its own flags.)
+After `ignite` succeeds:
 
+```bash
+./preinstall-cursor-torch.sh torch
+```
 
-## 3. Using the connection from VS Code / Cursor
+Then connect Cursor → Remote-SSH → **torch**.
 
-Once you’ve run `ignite` and the connection is up, that same connection is reused by anything that uses your SSH config.
+## 4. Using the connection
 
-- **VS Code / Cursor Remote-SSH:** Use “Connect to Host…” (or the Remote Explorer) and choose **torch** (the same host name from your config). They will use the existing connection; you won’t be prompted for device auth again until the connection expires (e.g. after 8 hours or a reboot).
-- **Another terminal:** Run `ssh torch` (or `ssh torch` and then your usual commands). Same underlying connection.
-- **Other tools:** Anything that uses `ssh torch` (e.g. `rsync`, `scp`, Git over SSH) will also reuse the connection as long as it’s still alive.
+Once `ignite` reports ready, anything using Host `torch` reuses the mux until it expires:
 
-So: run `ignite` once to get through Microsoft auth and establish the persistent connection; then use **torch** as the host everywhere. The “cumbersome” config is what makes this possible.
-
-## 4. Tuning
-
-1. **Delay before sending Enter to SSH:** Change `set browser_auth_wait 3` (near the top) to the number of seconds you generally need to finish login in the browser (e.g., set it to `10` if you often need more time).
-2. **Delay between opening the URL and simulating Paste:** Change `set paste_delay 1` (default is 1 second) if you want to make the script paste the PIN sooner or give yourself more time to switch focus to your browser.
-3. **Interval between each simulated Enter after Paste:** Change `set press_enter_interval 0.5` (default is 0.5 seconds) to adjust how quickly each Enter key press is sent after pasting.
-
-All these settings appear near the top of `ignite`. Adjust them if you want to make the flow faster or slower for your own pace.
-
-## Notes
-
-- The script uses your **default browser** and simulates Paste + Enter; it does not install or drive a separate browser.
-- First run may prompt you to accept the host key; with the config above, later runs reuse the same connection while it’s alive.
+- Cursor / VS Code Remote-SSH
+- `ssh torch`, `scp`, `rsync`, etc.
 
 ## FAQ
-**Q:** Why does my terminal show “SSH session ready” while the browser reports an invalid PIN?
 
-**A:** This usually happens due to **timing**. The browser authentication page may not have fully refreshed before the SSH login completed. This is often caused by **network latency** or **insufficient wait time** between automated steps. Increasing the delay between operations and restarting the authentication flow typically resolves the issue.
+**Q:** Terminal says ready but the browser says invalid PIN?  
+**A:** Usually a mismatched / stale PIN session. Close extra Microsoft tabs, run one `ignite`, paste that PIN only, finish auth, then press Enter.
+
+**Q:** `SSH exited before PIN prompt`?  
+**A:** VPN/network, Torch rate-limiting new SSH, or a leftover ControlMaster. Check VPN, `ssh -O exit torch`, wait a bit, retry once.
 
 ## Acknowledgements
 
-- The use of `expect` was inspired by [JosiahWayne](https://github.com/JosiahWayne/torch-login). I spent a long time trying to extract the device code from an interactive terminal session, and this approach solves that problem cleanly and reliably.
-- Many thanks to the NYU HPC team for their continued efforts in providing a robust research computing platform for the NYU community. While Torch can be challenging to use at times, I have confidence that the system will continue to improve thanks to the dedication and expertise of the team.
+- Based on **[Ignition](https://github.com/wenboluu/Ignition)** ([wenboluu/Ignition](https://github.com/wenboluu/Ignition.git)).
+- Expect-based device-code extraction inspired by [JosiahWayne/torch-login](https://github.com/JosiahWayne/torch-login).
+- Thanks to the NYU HPC team for Torch.
