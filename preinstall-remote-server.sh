@@ -145,52 +145,70 @@ install_cursor_local_or_remote() {
   commit="$(detect_cursor_commit)"
   method="$1"
   local target="${CURSOR_DOT}/bin/linux-x64/${commit}"
-  local url="https://downloads.cursor.com/production/${commit}/linux/x64/cursor-reh-linux-x64.tar.gz"
+  # Matches Cursor.app product.json serverDownloadUrlTemplate
+  local url="https://cursor.blob.core.windows.net/remote-releases/${commit}/vscode-reh-linux-x64.tar.gz"
   local remote_tar="${CURSOR_DOT}/cursor-server-preinstall.tar.gz"
   local bin_check="bin/cursor-server"
 
   echo ""
   echo "==> Cursor commit: ${commit}"
-  if ssh -o BatchMode=yes "${HOST}" "test -x '${target}/node' && test -f '${target}/${bin_check}'"; then
+  # Always clear stuck Remote-SSH extract/lock (common on Torch scratch)
+  ssh -o BatchMode=yes "${HOST}" "bash -s" <<'EOF'
+pkill -9 -u "$(id -un)" -f 'tar -xf cursor-server' 2>/dev/null || true
+rm -f /run/user/$(id -u)/cursor-remote-lock.* 2>/dev/null || true
+EOF
+
+  # node_modules/cookie is missing when a previous extract was killed mid-way
+  if ssh -o BatchMode=yes "${HOST}" "test -x '${target}/node' && test -f '${target}/${bin_check}' && test -d '${target}/node_modules/cookie'"; then
     echo "==> Cursor already at ${target}"
     ssh -o BatchMode=yes "${HOST}" "'${target}/node' -v"
     return 0
   fi
 
-  ssh -o BatchMode=yes "${HOST}" "mkdir -p '${CURSOR_DOT}/bin/linux-x64' && rm -f /run/user/\$(id -u)/cursor-remote-lock.* 2>/dev/null || true"
+  ssh -o BatchMode=yes "${HOST}" "mkdir -p '${CURSOR_DOT}/bin/linux-x64'"
+
+  extract_remote() {
+    # Atomic extract into target.new then swap — avoids half-written trees + lock races
+    ssh -o BatchMode=yes "${HOST}" "bash -s" <<EOF
+set -euo pipefail
+TARGET="${target}"
+REMOTE_TAR="${remote_tar}"
+rm -rf "\${TARGET}.new" "\${TARGET}.old"
+mkdir -p "\${TARGET}.new"
+tar -xf "\${REMOTE_TAR}" -C "\${TARGET}.new" --strip-components=1
+test -x "\${TARGET}.new/node"
+test -f "\${TARGET}.new/${bin_check}"
+[ -d "\${TARGET}" ] && mv "\${TARGET}" "\${TARGET}.old" || true
+mv "\${TARGET}.new" "\${TARGET}"
+rm -rf "\${TARGET}.old"
+rm -f "\${REMOTE_TAR}"
+"\${TARGET}/node" -v
+EOF
+  }
 
   if [[ "$method" == "remote" ]]; then
     echo "==> Downloading Cursor on remote..."
-    ssh -o BatchMode=yes "${HOST}" "bash -s" <<EOF
-set -euo pipefail
-curl -fL --progress-bar -o "${remote_tar}" "${url}"
-mkdir -p "${target}"
-tar -xf "${remote_tar}" -C "${target}" --strip-components=1
-rm -f "${remote_tar}"
-test -x "${target}/node"
-"${target}/node" -v
-test -f "${target}/${bin_check}"
-EOF
+    ssh -o BatchMode=yes "${HOST}" "curl -fL --progress-bar -o '${remote_tar}' '${url}'"
+    echo "==> Extracting on remote (scratch can take several minutes)..."
+    extract_remote
   else
     local local_tar
     local_tar="$(mktemp -t cursor-server-XXXXXX).tar.gz"
     echo "==> Downloading Cursor on laptop..."
-    curl -fL --progress-bar -o "${local_tar}" "${url}"
+    # Prefer product.json URL; fall back to CDN production path
+    if ! curl -fL --progress-bar -o "${local_tar}" "${url}"; then
+      url="https://downloads.cursor.com/production/${commit}/linux/x64/cursor-reh-linux-x64.tar.gz"
+      echo "==> Azure blob failed; trying ${url}"
+      curl -fL --progress-bar -o "${local_tar}" "${url}"
+    fi
     echo "==> Uploading..."
     scp -o BatchMode=yes "${local_tar}" "${HOST}:${remote_tar}"
     rm -f "${local_tar}"
-    echo "==> Extracting on remote..."
-    ssh -o BatchMode=yes "${HOST}" "bash -s" <<EOF
-set -euo pipefail
-mkdir -p "${target}"
-tar -xf "${remote_tar}" -C "${target}" --strip-components=1
-rm -f "${remote_tar}"
-test -x "${target}/node"
-"${target}/node" -v
-test -f "${target}/${bin_check}"
-EOF
+    echo "==> Extracting on remote (scratch can take several minutes)..."
+    extract_remote
   fi
   echo "==> Cursor ready. Set remote.SSH.serverInstallPath.${HOST} = ${CURSOR_PARENT}"
+  echo "    After every Cursor app update: ./preinstall-cursor-torch.sh ${HOST}   then reconnect."
 }
 
 install_vscode_local_or_remote() {

@@ -95,23 +95,17 @@ Torch **home** has a tight inode quota; IDE servers unpack many small files. Put
 After `ignite` succeeds:
 
 ```bash
-# Default: prepare BOTH Cursor + VS Code (download on laptop → scp → extract)
-./preinstall-remote-server.sh torch
-
-# Or pick one editor
-./preinstall-remote-server.sh --editor cursor torch
-./preinstall-remote-server.sh --editor vscode torch
-# wrappers:
+# Cursor only (recommended on Torch)
 ./preinstall-cursor-torch.sh torch
-./preinstall-vscode-torch.sh torch
 
-# Methods
-./preinstall-remote-server.sh --method local torch     # laptop download (default, most reliable)
-./preinstall-remote-server.sh --method remote torch    # curl on login node (needs outbound HTTPS)
-./preinstall-remote-server.sh --method symlink torch   # no pre-download; symlink ~/.cursor-server
-                                                       # and/or ~/.vscode-server → scratch so the
-                                                       # IDE’s own installer lands off home
+# Or both editors / other methods
+./preinstall-remote-server.sh torch
+./preinstall-remote-server.sh --editor vscode torch
+./preinstall-remote-server.sh --method remote torch    # curl on login node
+./preinstall-remote-server.sh --method symlink torch   # symlink home → scratch only
 ```
+
+**Every Cursor desktop update** ships a new remote-server commit. On Torch scratch, Cursor’s own extract often stalls on a lock (`Could not acquire lock`). Fix: run `./preinstall-cursor-torch.sh torch` **before** reconnecting Remote-SSH (do not open multiple Remote windows during extract).
 
 Pin commits if auto-detect fails: `CURSOR_COMMIT=...` / `VSCODE_COMMIT=...`.
 
@@ -122,7 +116,7 @@ Suggested settings (replace NetID / only keep the editor you use):
   "remote.SSH.serverInstallPath": {
     "torch": "/scratch/YOUR_NETID/cursor-server"
   },
-  "remote.SSH.localServerDownload": "always",
+  "remote.SSH.localServerDownload": "auto",
   "remote.SSH.connectTimeout": 600
 }
 ```
